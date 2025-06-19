@@ -39,7 +39,8 @@ pve_ceph_pools: []
 pve_ceph_fs: []
 pve_ceph_crush_rules: []
 pve_ceph_rgw_enabled: false
-pve_ceph_rgw_keyring: "/etc/ceph/ceph.client.radosgw.keyring"
+pve_ceph_rgw_group: "{{ pve_group }}"
+pve_ceph_rgw_dns: "s3.example.net"
 # pve_ssl_private_key: "contents of private key"
 # pve_ssl_certificate: "contents of certificate"
 pve_cluster_enabled: no

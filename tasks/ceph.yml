@@ -253,26 +253,97 @@
 
 - name: Deploy Ceph RGW
   block:
-    - name: Create RGW Realm
+    - name: Create RGW realm
       command: 'radosgw-admin realm create --rgw-realm=default --default'
       register: _ceph_rgw_realm
-    
-    - debug:
-        var: _ceph_rgw_realm
-    # - name: Create Ceph RGW keyring
-    #   command: 'ceph auth get-or-create client.radosgw mon "allow rw" osd "allow rwx"'
-    #   register: _ceph_rgw_auth
-    #   changed_when: '"added key" in _ceph_rgw_auth.stdout'
+      failed_when: _ceph_rgw_realm.rc not in [0, 17]
+      changed_when: _ceph_rgw_realm.rc == 0
 
-    # - name: Fetch Ceph RGW host keys
-    #   command: 'ceph auth print-key client.radosgw'
-    #   args:
-    #     creates: '/etc/ceph/radosgw.secret'
-    #   register: _ceph_rgw_key
-      
-    # - name: Create Ceph RGW host permissions
-    # - name: Add Ceph RGW keys to cluster
+    - name: Build RGW endpoints from RGW Group
+      set_fact:
+        ceph_rgw_endpoints: >-
+          {%- set ips = groups[pve_ceph_rgw_group] | map('extract', hostvars, 'ansible_host') | list -%}
+          {%- set endpoints = [] -%}
+          {%- for ip in ips -%}
+            {%- set _ = endpoints.append('http://' ~ ip ~ ':7480') -%}
+          {%- endfor -%}
+          {{ endpoints | join(',') }}
+
+    - name: Create RGW master zone group
+      command: >
+        radosgw-admin zonegroup create
+        --rgw-zonegroup=default
+        --master
+        --default
+        --endpoints={{ ceph_rgw_endpoints }}
+      register: _ceph_rgw_zonegroup
+      failed_when: _ceph_rgw_zonegroup.rc not in [0, 17]
+      changed_when: _ceph_rgw_zonegroup.rc == 0
+
+    - name: Create RGW master zone
+      command: >
+        radosgw-admin zone create
+        --rgw-zonegroup=default
+        --rgw-zone=default
+        --master --default
+        --endpoints={{ ceph_rgw_endpoints }}
+      register: _ceph_rgw_zone
+      failed_when: _ceph_rgw_zone.rc not in [0, 17]
+      changed_when: _ceph_rgw_zone.rc == 0
+
+    - name: Commit RGW realm, zonegroup and zone changes
+      command: 'radosgw-admin period update --commit'
+      when: _ceph_rgw_realm is changed or _ceph_rgw_zonegroup is changed or _ceph_rgw_zone is changed
 
   when: >
     pve_ceph_rgw_enabled and
-    inventory_hostname == groups[pve_ceph_mon_group][0]
+    inventory_hostname == groups[pve_ceph_rgw_group][0]
+
+- name: Configure Ceph RGW hosts with service
+  block:
+
+    - name: Create RGW auth key for each host
+      command: >
+        ceph auth get-or-create client.rgw.{{ ansible_hostname }}
+        mon 'allow rw' osd 'allow rwx'
+        -o /etc/ceph/ceph.client.rgw.{{ ansible_hostname }}.keyring
+      register: _ceph_rgw_auth
+      changed_when: "'added key' in _ceph_rgw_auth.stdout"
+
+    - name: Install RGW keyring into Proxmox priv directory
+      command: >
+        install -o root -g www-data -m 0600
+        /etc/ceph/ceph.client.rgw.{{ ansible_hostname }}.keyring
+        /etc/pve/priv/ceph.client.rgw.{{ ansible_hostname }}.keyring
+      args:
+        creates: "/etc/pve/priv/ceph.client.rgw.{{ ansible_hostname }}.keyring"
+
+    - name: Ensure RGW runtime directory exists and is owned by ceph
+      file:
+        path: "/var/lib/ceph/ceph-rgw.{{ inventory_hostname }}"
+        state: directory
+        owner: ceph
+        group: ceph
+        recurse: true
+        mode: '0750'
+
+    - name: Ensure RGW client stanza is in ceph.conf
+      blockinfile:
+        path: /etc/ceph/ceph.conf
+        marker: "# {mark} ANSIBLE RGW {{ inventory_hostname }}"
+        block: |
+          [client.rgw.{{ inventory_hostname }}]
+            host            = {{ inventory_hostname }}
+            keyring         = /etc/ceph/ceph.client.rgw.{{ inventory_hostname }}.keyring
+            rgw_dns_name    = {{ pve_ceph_rgw_dns }}
+            log file        = /var/log/ceph/client.rgw.{{ inventory_hostname }}.log
+
+    - name: Enable and start the RGW systemd service
+      systemd_service:
+        name: "ceph-radosgw@rgw.{{ inventory_hostname }}"
+        enabled: true
+        state: started
+
+  when: >
+    pve_ceph_rgw_enabled and
+    inventory_hostname in groups[pve_ceph_rgw_group]
