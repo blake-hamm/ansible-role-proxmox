@@ -17,6 +17,11 @@
     _pve_install_packages: "{{ _pve_install_packages | union(['ceph', 'ceph-common', 'ceph-mds', 'ceph-fuse', 'gdisk']) }}"
   when: "pve_ceph_enabled | bool"
 
+- name: Stage Ceph Rados Gateway package if Ceph RGW is enabled
+  set_fact:
+    _pve_install_packages: "{{ _pve_install_packages | union(['radosgw']) }}"
+  when: "pve_ceph_rgw_enabled | bool"
+
 - name: Stage any extra packages the user has specified
   set_fact:
     _pve_install_packages: "{{ _pve_install_packages | union(pve_extra_packages) }}"

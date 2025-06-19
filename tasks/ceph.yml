@@ -250,3 +250,29 @@
     state: 'mounted'
   when: "item.mountpoint is defined"
   loop: '{{ pve_ceph_fs }}'
+
+- name: Deploy Ceph RGW
+  block:
+    - name: Create RGW Realm
+      command: 'radosgw-admin realm create --rgw-realm=default --default'
+      register: _ceph_rgw_realm
+    
+    - debug:
+        var: _ceph_rgw_realm
+    # - name: Create Ceph RGW keyring
+    #   command: 'ceph auth get-or-create client.radosgw mon "allow rw" osd "allow rwx"'
+    #   register: _ceph_rgw_auth
+    #   changed_when: '"added key" in _ceph_rgw_auth.stdout'
+
+    # - name: Fetch Ceph RGW host keys
+    #   command: 'ceph auth print-key client.radosgw'
+    #   args:
+    #     creates: '/etc/ceph/radosgw.secret'
+    #   register: _ceph_rgw_key
+      
+    # - name: Create Ceph RGW host permissions
+    # - name: Add Ceph RGW keys to cluster
+
+  when: >
+    pve_ceph_rgw_enabled and
+    inventory_hostname == groups[pve_ceph_mon_group][0]
