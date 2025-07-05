@@ -347,3 +347,31 @@
   when: >
     pve_ceph_rgw_enabled and
     inventory_hostname in groups[pve_ceph_rgw_group]
+
+- name: Setup Ceph RGW Admin user
+  block:
+
+    - name: Create RGW admin user (S3 credentials)
+      command: >
+        radosgw-admin user create
+          --uid="{{ pve_ceph_rgw_admin_uid }}"
+          --display-name="{{ pve_ceph_rgw_admin_display }}"
+          --gen-access-key
+          --gen-secret
+      register: _rgw_admin_user
+      changed_when: "'created user' in _rgw_admin_user.stdout"
+      failed_when: _rgw_admin_user.rc not in [0, 17, 32]
+
+    - name: Grant RGW bucket-only admin caps
+      command: >
+        radosgw-admin caps add
+          --uid="{{ pve_ceph_rgw_admin_uid }}"
+          --caps="buckets=*"
+      register: _rgw_admin_caps
+      changed_when: "'added cap' in _rgw_admin_caps.stdout"
+
+  when: >
+    pve_ceph_rgw_enabled and
+    pve_ceph_rgw_admin and
+    inventory_hostname == groups[pve_ceph_rgw_group][0]
+ 
